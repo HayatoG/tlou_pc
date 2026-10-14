@@ -47,13 +47,16 @@ if [[ -n $shots ]]; then
     python3 - "$shots" <<'EOF'
 import sys, re
 from pathlib import Path
+import numpy as np
 from PIL import Image
+# TLOU's display buffer is A2R10G10B10 (10 bits per channel), not 8-bit BGRA.
 for raw in Path(sys.argv[1]).glob('display_*.raw'):
     m = re.search(r'_(\d+)x(\d+)\.raw$', raw.name); w, h = int(m[1]), int(m[2])
-    d = raw.read_bytes()
-    if len(d) >= w * h * 4:
-        r, g, b, _ = Image.frombytes('RGBA', (w, h), d[:w*h*4]).split()  # the display buffer is BGRA
-        Image.merge('RGB', (b, g, r)).save(raw.with_suffix('.png'))
+    d = np.fromfile(raw, dtype='<u4')
+    if d.size >= w * h:
+        d = d[:w * h].reshape(h, w)
+        rgb = np.stack([((d >> s) & 1023) >> 2 for s in (20, 10, 0)], -1).astype('uint8')
+        Image.fromarray(rgb).save(raw.with_suffix('.png'))
 EOF
 fi
 echo "exit $code; log: $log"
