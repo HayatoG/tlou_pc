@@ -106,6 +106,7 @@ Hoje o núcleo lê só `TLG_` (herdado do primeiro port). Plano em duas etapas:
 - A biblioteca da GPU (`cmake -S port/gpu`) não depende dos arquivos do jogo no Linux.
 - Dependências: Vulkan, SDL3, FFmpeg (libavcodec/libavutil/libswscale), FreeType (o `build.sh` usa `../../tools/freetype-devel` se o sistema não tiver), Zydis; Windows em MSYS2 CLANG64 (`msys2-env.sh`).
 - **Cache de shaders:** `~/.local/share/shadPS4/cache/<TITLE_ID>-<chave>`; a chave (`TLG_SHADER_CACHE_KEY`) é o SHA-1 dos fontes do tradutor, calculado pelo CMake. Mesma versão do núcleo = mesma chave em todos os jogos; mudar o tradutor aqui gera chave nova e o cache velho é apagado sozinho. Um port não deve mexer no tradutor localmente.
+- **Limpar o cache de shaders:** botão **Limpar cache de shaders** no launcher, ou `./run_tlou.sh --clear-shader-cache` (`port/launcher/shader_cache.py`: só o cache deste jogo, nunca saves, configurações ou logs).
 
 ## Regras
 
@@ -183,7 +184,7 @@ Today each port carries a copy kept in step with `tools/core_sync.py`. Plan: (1)
 
 ## Build notes
 
-Core-only build: `cd port && flock -x <lock> env TLG_LTO=OFF bash build.sh --test` links `src/game_none.c` and runs the C tests (packaging still needs a game's `port.env`, icon and `.rc`). To test a core change on a game, bring it into the port (with its `game_<slug>.c`) and build there under the lock. The GPU library (`cmake -S port/gpu`) does not need game files on Linux. Dependencies: Vulkan, SDL3, FFmpeg, FreeType, Zydis; Windows via MSYS2 CLANG64. Shader cache `~/.local/share/shadPS4/cache/<TITLE_ID>-<key>`, key = SHA-1 of the recompiler sources: same core, same key in every game; a recompiler change invalidates old caches automatically.
+Core-only build: `cd port && flock -x <lock> env TLG_LTO=OFF bash build.sh --test` links `src/game_none.c` and runs the C tests (packaging still needs a game's `port.env`, icon and `.rc`). To test a core change on a game, bring it into the port (with its `game_<slug>.c`) and build there under the lock. The GPU library (`cmake -S port/gpu`) does not need game files on Linux. Dependencies: Vulkan, SDL3, FFmpeg, FreeType, Zydis; Windows via MSYS2 CLANG64. Shader cache `~/.local/share/shadPS4/cache/<TITLE_ID>-<key>`, key = SHA-1 of the recompiler sources: same core, same key in every game; a recompiler change invalidates old caches automatically. The launcher's **Clear shader cache** button (or `./run_tlou.sh --clear-shader-cache`) deletes only this game's cache.
 
 ## Rules
 
