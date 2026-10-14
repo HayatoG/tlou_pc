@@ -53,8 +53,8 @@ DEFAULT_SETTINGS = {
     'vsync': True,
     'vram_budget_mb': 3500,  # 5600 runs out of VRAM loading the first level (RTX 2060, 6 GB)
     'stick_deadzone': 10,    # percent; runtime_pad.c TLOU_STICK_DEADZONE
-    'eager_readback': True,  # TLOU_EAGER_READBACK: copy GPU results the game reads back at each fence
-    'write_merge': True,     # TLOU_WRITE_MERGE: game memcpy/memset into GPU memory without a GPU wait
+    'eager_readback': False,  # TLOU_EAGER_READBACK (off: stale EOP marker hangs the first gameplay frame): copy GPU results the game reads back at each fence
+    'write_merge': False,     # TLOU_WRITE_MERGE (off with eager readback): game memcpy/memset into GPU memory without a GPU wait
     'gpu_readbacks': '2',    # 2 precise: GPU particles (smoke to drain) need it; 0 fast skips them
 }
 
@@ -249,8 +249,8 @@ def build_env(settings, extra=None):
         env.setdefault(key, value)  # explicit TLOU_* in the environment always win
     env['TLOU_GC_BUDGET_MB'] = os.environ.get('TLOU_GC_BUDGET_MB', str(int(settings['vram_budget_mb'])))
     env['TLOU_READBACKS'] = os.environ.get('TLOU_READBACKS', str(settings.get('gpu_readbacks', '2')))
-    env['TLOU_EAGER_READBACK'] = os.environ.get('TLOU_EAGER_READBACK', '1' if settings.get('eager_readback', True) else '0')
-    env['TLOU_WRITE_MERGE'] = os.environ.get('TLOU_WRITE_MERGE', '1' if settings.get('write_merge', True) else '0')
+    env['TLOU_EAGER_READBACK'] = os.environ.get('TLOU_EAGER_READBACK', '1' if settings.get('eager_readback', False) else '0')
+    env['TLOU_WRITE_MERGE'] = os.environ.get('TLOU_WRITE_MERGE', '1' if settings.get('write_merge', False) else '0')
     env['TLOU_STICK_DEADZONE'] = os.environ.get('TLOU_STICK_DEADZONE', f"{int(settings.get('stick_deadzone', 10)) / 100:.2f}")
     env['TLOU_LANGUAGE'] = os.environ.get('TLOU_LANGUAGE', str(GAME_LANGUAGES.get(settings['game_language'], 1)))
     if settings.get('ui_language', 'auto') != 'auto':
