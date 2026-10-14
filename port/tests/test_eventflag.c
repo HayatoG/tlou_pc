@@ -9,6 +9,11 @@
 #include "runtime.h"
 
 void runtime_restart(void) { abort(); }
+/* Freeze report wait marks (runtime_thread.c, not linked here). */
+void runtime_wait_begin(const char *kind, const void *object, const char *name, const void *const *owner, uintptr_t frame) {
+    (void)kind; (void)object; (void)name; (void)owner; (void)frame;
+}
+void runtime_wait_end(void) {}
 int64_t runtime_file_getdents(int fd, char *buffer, uint64_t size, int64_t *base) {
     (void)buffer; (void)base; return fd == 7 ? (int64_t)size : -1;
 }
