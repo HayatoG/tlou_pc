@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""The Last of Us Remastered launcher (Tkinter, Linux and Windows), in pt_BR and en_US.
+
+Game folder, game and interface language, display, FPS overlay and VRAM budget; Play starts the
+game through tlou_run.py (the same code path as run_tlou.sh) and shows its log.
+Settings live in ~/.config/tlou-launcher/settings.json (%APPDATA% on Windows).
+"""
+import locale
+import os
+from pathlib import Path
+import queue
+import subprocess
+import sys
+import threading
+import webbrowser
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tlou_run as tlg_run  # noqa: E402  (same API as the TLG core)
+
+TEXT = {
+    'title': ('The Last of Us Remastered — PC', 'The Last of Us Remastered — PC'),
+    'game': ('Game', 'Jogo'),
+    'game_dir': ('Game folder', 'Pasta do jogo'),
+    'browse': ('Browse…', 'Procurar…'),
+    'language': ('Language', 'Idioma'),
+    'game_language': ('Game language (voice and text)', 'Idioma do jogo (voz e texto)'),
+    'ui_language': ('Interface language', 'Idioma da interface'),
+    'auto': ('Automatic (system)', 'Automático (sistema)'),
+    'video': ('Video', 'Vídeo'),
+    'display_mode': ('Display mode', 'Modo de exibição'),
+    'Windowed': ('Windowed', 'Janela'),
+    'Borderless': ('Borderless window', 'Janela sem borda'),
+    'Fullscreen': ('Fullscreen', 'Tela cheia'),
+    'vsync': ('VSync', 'VSync'),
+    'show_fps': ('Show FPS overlay at start (F10 toggles)', 'Mostrar overlay de FPS ao iniciar (F10 alterna)'),
+    'eager_readback': ('Read GPU results ahead (faster)', 'Ler resultados da GPU antecipado (mais rápido)'),
+    'write_merge': ('Write to GPU memory without waiting (faster)', 'Escrever na memória da GPU sem esperar (mais rápido)'),
+    'vram': ('Texture cache budget (MB of VRAM)', 'Orçamento do cache de texturas (MB de VRAM)'),
+    'vram_hint': ('3500 for 6 GB cards, 5000 for 8 GB', '3500 para placas de 6 GB, 5000 para 8 GB'),
+    'gpu_readbacks': ('GPU accuracy', 'Precisão da GPU'),
+    'readbacks_0': ('Fast (no GPU particles)', 'Rápido (sem partículas da GPU)'),
+    'readbacks_1': ('Relaxed', 'Intermediário'),
+    'readbacks_2': ('Precise (recommended)', 'Preciso (recomendado)'),
+    'controller': ('Controller', 'Controle'),
+    'deadzone': ('Stick dead zone', 'Zona morta dos analógicos'),
+    'deadzone_hint': ('Raise it if the character or camera moves on its own (stick drift).',
+                      'Aumente se o personagem ou a câmera se mexer sozinho (drift).'),
+    'play': ('Play', 'Jogar'),
+    'saves': ('Saves folder', 'Pasta de saves'),
+    'logs': ('Logs folder', 'Pasta de logs'),
+    'quit': ('Quit', 'Sair'),
+    'ready': ('Ready to play.', 'Pronto para jogar.'),
+    'missing': ('Missing', 'Faltando'),
+    'not_built': ('Port not built (run build.sh)', 'Port não compilado (rode o build.sh)'),
+    'preparing': ('Preparing the game…', 'Preparando o jogo…'),
+    'running': ('Playing — log:', 'Jogando — log:'),
+    'ended': ('Game closed (exit code {code}).', 'Jogo fechado (código {code}).'),
+    'crashed': ('The game closed with an error (code {code}). The log has the details.',
+                'O jogo fechou com erro (código {code}). Os detalhes estão no log.'),
+    'already': ('The game is already running.', 'O jogo já está rodando.'),
+    'error': ('Error', 'Erro'),
+    'port_by': ('PC port by HayatoG', 'Port para PC por HayatoG'),
+    'channel': ('YouTube channel: @hayatog-dev', 'Canal no YouTube: @hayatog-dev'),
+    'discord': ('Discord community', 'Comunidade no Discord'),
+}
+CHANNEL_URL = 'https://www.youtube.com/@hayatog-dev'
+DISCORD_URL = 'https://discord.gg/UMkdMYZh9g'
+GAME_LANGUAGE_NAMES = {'en': 'English', 'pt_BR': 'Português (Brasil)', 'es_LA': 'Español (Latinoamérica)',
+                       'fr_CA': 'Français (Canada)'}
+UI_LANGUAGES = ['auto', 'pt_BR', 'en_US']
+UI_LANGUAGE_NAMES = {'pt_BR': 'Português (Brasil)', 'en_US': 'English (US)'}
+DISPLAY_MODES = ['Windowed', 'Borderless', 'Fullscreen']
+
+
+def art_path(settings, name):
+    """Official art from the user's own dump (sce_sys); never shipped with the port."""
+    for folder in (Path(settings['game_dir']) / 'sce_sys', tlg_run.REPO_DIR / 'dump' / 'sce_sys'):
+        if (folder / name).is_file():
+            return folder / name
+    return None
+
+
+def system_is_portuguese():
+    for name in ('LC_ALL', 'LC_MESSAGES', 'LANG'):
+        value = os.environ.get(name)
+        if value:
+            return value.lower().startswith('pt')
+    try:
+        return (locale.getlocale()[0] or '').lower().startswith('pt')
+    except ValueError:
+        return False
+
+
+class Launcher:
+    def __init__(self, root):
+        self.root = root
+        self.settings = tlg_run.load_settings()
+        self.process = None
+        self.lines = queue.Queue()
+        self.build()
+        self.root.after(100, self.pump)
+
+    # -- language ---------------------------------------------------------------------------
+    def pt(self):
+        choice = self.settings.get('ui_language', 'auto')
+        return system_is_portuguese() if choice == 'auto' else choice == 'pt_BR'
+
+    def t(self, key, **fmt):
+        en, pt = TEXT[key]
+        return (pt if self.pt() else en).format(**fmt)
+
+    # -- window -----------------------------------------------------------------------------
+    def build(self):
+        """Horizontal layout: banner on top; Game | Language + Video | game log; buttons below."""
+        for child in self.root.winfo_children():
+            child.destroy()
+        root = self.root
+        root.title(self.t('title'))
+        root.minsize(1120, 640)
+        pad = {'padx': 6, 'pady': 4}
+        main = ttk.Frame(root, padding=12)
+        main.pack(fill='both', expand=True)
+        for column, weight in enumerate((3, 3, 4)):
+            main.columnconfigure(column, weight=weight, uniform='cols' if column < 2 else '')
+        main.rowconfigure(2, weight=1)
+
+        header = ttk.Frame(main)
+        header.grid(row=0, column=0, columnspan=3, sticky='ew', pady=(0, 8))
+        self.load_art()
+        if self.banner:
+            ttk.Label(header, image=self.banner).pack(side='left', padx=(0, 14))
+        titles = ttk.Frame(header)
+        titles.pack(side='left', fill='y')
+        ttk.Label(titles, text='The Last of Us Remastered', font=('TkDefaultFont', 22, 'bold')).pack(anchor='w')
+        ttk.Label(titles, text='PC — CUSA00552 v1.11', foreground='#777').pack(anchor='w')
+        credits = ttk.Frame(header)
+        credits.pack(side='right', anchor='ne')
+        ttk.Label(credits, text=self.t('port_by'), foreground='#777').pack(anchor='e')
+        for key, url in (('channel', CHANNEL_URL), ('discord', DISCORD_URL)):
+            link = ttk.Label(credits, text=self.t(key), foreground='#2a6fdb', cursor='hand2',
+                             font=('TkDefaultFont', 10, 'underline'))
+            link.pack(anchor='e')
+            link.bind('<Button-1>', lambda _, u=url: webbrowser.open(u))
+        self.status = ttk.Label(titles, text='', foreground='#555', wraplength=420, justify='left')
+        self.status.pack(anchor='w', pady=(10, 0))
+
+        self.vars = {}
+        left = ttk.Frame(main)
+        left.grid(row=2, column=0, sticky='nsew', **pad)
+        left.columnconfigure(0, weight=1)
+        game = ttk.LabelFrame(left, text=self.t('game'), padding=8)
+        game.grid(sticky='ew', pady=(0, 8))
+        game.columnconfigure(0, weight=1)
+        for row, key in enumerate(('game_dir',)):
+            ttk.Label(game, text=self.t(key)).grid(row=row * 2, column=0, columnspan=2, sticky='w')
+            var = tk.StringVar(value=self.settings[key])
+            var.trace_add('write', lambda *_: self.changed())
+            self.vars[key] = var
+            ttk.Entry(game, textvariable=var).grid(row=row * 2 + 1, column=0, sticky='ew', pady=(0, 6))
+            ttk.Button(game, text=self.t('browse'), command=lambda k=key: self.browse(k)).grid(
+                row=row * 2 + 1, column=1, padx=(6, 0), pady=(0, 6))
+
+        pad_box = ttk.LabelFrame(left, text=self.t('controller'), padding=8)
+        pad_box.grid(sticky='ew', pady=(0, 8))
+        pad_box.columnconfigure(0, weight=1)
+        ttk.Label(pad_box, text=self.t('deadzone')).grid(row=0, column=0, columnspan=2, sticky='w')
+        zone = tk.IntVar(value=int(self.settings.get('stick_deadzone', 10)))
+        self.vars['stick_deadzone'] = zone
+        zone_text = ttk.Label(pad_box, text=f'{zone.get()}%', width=5)
+        zone_text.grid(row=1, column=1, sticky='e')
+
+        def zone_moved(value):
+            zone.set(int(round(float(value))))
+            zone_text.configure(text=f'{zone.get()}%')
+            self.changed()
+        ttk.Scale(pad_box, from_=0, to=40, variable=zone, command=zone_moved).grid(row=1, column=0, sticky='ew')
+        ttk.Label(pad_box, text=self.t('deadzone_hint'), foreground='#777', wraplength=260, justify='left').grid(
+            row=2, column=0, columnspan=2, sticky='w')
+
+        middle = ttk.Frame(main)
+        middle.grid(row=2, column=1, sticky='nsew', **pad)
+        middle.columnconfigure(0, weight=1)
+        lang = ttk.LabelFrame(middle, text=self.t('language'), padding=8)
+        lang.grid(sticky='ew', pady=(0, 8))
+        lang.columnconfigure(1, weight=1)
+        self.combo(lang, 0, 'game_language', list(tlg_run.GAME_LANGUAGES), lambda k: GAME_LANGUAGE_NAMES[k])
+        self.combo(lang, 1, 'ui_language', UI_LANGUAGES,
+                   lambda k: self.t('auto') if k == 'auto' else UI_LANGUAGE_NAMES[k], on_change=self.build)
+        video = ttk.LabelFrame(middle, text=self.t('video'), padding=8)
+        video.grid(sticky='ew')
+        video.columnconfigure(1, weight=1)
+        self.combo(video, 0, 'display_mode', DISPLAY_MODES, lambda k: self.t(k))
+        self.check(video, 1, 'vsync')
+        self.check(video, 2, 'show_fps')
+        self.combo(video, 5, 'gpu_readbacks', ['0', '1', '2'], lambda k: self.t('readbacks_' + k))
+        self.check(video, 6, 'eager_readback')
+        self.check(video, 7, 'write_merge')
+        ttk.Label(video, text=self.t('vram'), wraplength=220).grid(row=3, column=0, sticky='w', pady=(6, 0))
+        vram = tk.IntVar(value=int(self.settings['vram_budget_mb']))
+        self.vars['vram_budget_mb'] = vram
+        spin = ttk.Spinbox(video, from_=2000, to=24000, increment=200, textvariable=vram, width=8,
+                           command=self.changed)
+        spin.grid(row=3, column=1, sticky='w', padx=6, pady=(6, 0))
+        spin.bind('<FocusOut>', lambda _: self.changed())
+        ttk.Label(video, text=self.t('vram_hint'), foreground='#777').grid(row=4, column=0, columnspan=2, sticky='w')
+
+        log_frame = ttk.LabelFrame(main, text='Log', padding=4)
+        log_frame.grid(row=2, column=2, sticky='nsew', **pad)
+        self.log = tk.Text(log_frame, wrap='none', font=('TkFixedFont', 9), state='disabled', width=60)
+        scroll = ttk.Scrollbar(log_frame, command=self.log.yview)
+        self.log.configure(yscrollcommand=scroll.set)
+        self.log.pack(side='left', fill='both', expand=True)
+        scroll.pack(side='right', fill='y')
+
+        buttons = ttk.Frame(main)
+        buttons.grid(row=3, column=0, columnspan=3, sticky='ew', pady=(10, 0))
+        ttk.Button(buttons, text=self.t('quit'), command=self.quit).pack(side='left')
+        style = ttk.Style()
+        style.configure('Play.TButton', font=('TkDefaultFont', 13, 'bold'))
+        self.play_button = ttk.Button(buttons, text=self.t('play'), style='Play.TButton', command=self.play)
+        self.play_button.pack(side='right', ipadx=30, ipady=8)
+        ttk.Button(buttons, text=self.t('logs'), command=lambda: self.open(tlg_run.LOG_DIR)).pack(side='right', padx=6)
+        ttk.Button(buttons, text=self.t('saves'), command=lambda: self.open(tlg_run.USER_DIR / 'savedata')).pack(side='right')
+        self.refresh_status()
+
+    def load_art(self):
+        """Window icon (the game's icon0.png, else the port's tlou.png) and a 480x135 banner (a band of pic1.png from the dump, when present)."""
+        self.banner = getattr(self, 'banner', None)
+        if getattr(self, 'art_loaded', False):
+            return
+        self.art_loaded = True
+        try:
+            icon = art_path(self.settings, 'icon0.png')  # the game's own icon, from the user's dump
+            if icon and icon.is_file():
+                self.icon = tk.PhotoImage(file=str(icon)).subsample(4)
+                self.root.iconphoto(True, self.icon)
+            elif (tlg_run.PORT_DIR / 'launcher' / 'tlou.png').is_file():  # the port's own icon
+                self.icon = tk.PhotoImage(file=str(tlg_run.PORT_DIR / 'launcher' / 'tlou.png'))
+                self.root.iconphoto(True, self.icon)
+            picture = art_path(self.settings, 'pic1.png') or art_path(self.settings, 'pic0.png')
+            if picture:
+                full = tk.PhotoImage(file=str(picture))
+                band = full.width() * 9 // 32           # a 32:9 band from the middle of the image
+                top = (full.height() - band) // 2
+                self.banner = tk.PhotoImage()
+                self.banner.tk.call(self.banner, 'copy', full, '-from', 0, top, full.width(), top + band,
+                                    '-subsample', 4, 4)  # Tk command: same on every Python version
+        except tk.TclError:
+            self.banner = None
+
+    def combo(self, parent, row, key, values, label, on_change=None):
+        ttk.Label(parent, text=self.t(key)).grid(row=row, column=0, sticky='w')
+        names = [label(v) for v in values]
+        box = ttk.Combobox(parent, values=names, state='readonly', width=28)
+        current = self.settings.get(key, values[0])
+        box.current(values.index(current) if current in values else 0)
+        box.grid(row=row, column=1, sticky='w', padx=6, pady=2)
+
+        def picked(_):
+            self.settings[key] = values[box.current()]
+            tlg_run.save_settings(self.settings)
+            if on_change:
+                on_change()
+            else:
+                self.refresh_status()
+        box.bind('<<ComboboxSelected>>', picked)
+        return box
+
+    def check(self, parent, row, key):
+        var = tk.BooleanVar(value=bool(self.settings[key]))
+        self.vars[key] = var
+        ttk.Checkbutton(parent, text=self.t(key), variable=var, command=self.changed).grid(
+            row=row, column=0, columnspan=3, sticky='w', pady=2)
+
+    # -- actions ----------------------------------------------------------------------------
+    def changed(self):
+        for key, var in self.vars.items():
+            try:
+                self.settings[key] = var.get()
+            except tk.TclError:
+                pass  # spinbox while typing
+        tlg_run.save_settings(self.settings)
+        self.refresh_status()
+
+    def refresh_status(self):
+        problems = tlg_run.check_game(self.settings['game_dir'])
+        if problems:
+            text = '; '.join(self.t('not_built') if k == 'not_built' else f"{self.t('missing')}: {d}"
+                             for k, d in problems)
+        else:
+            text = self.t('ready')
+        self.status.configure(text=text)
+        self.play_button.configure(state='disabled' if problems or self.process else 'normal')
+
+    def browse(self, key):
+        path = filedialog.askdirectory(initialdir=self.vars[key].get() or str(Path.home()))
+        if path:
+            self.vars[key].set(path)
+
+    def open(self, path):
+        Path(path).mkdir(parents=True, exist_ok=True)
+        if os.name == 'nt':
+            os.startfile(path)  # noqa: S606 (local folder)
+        else:
+            subprocess.Popen(['xdg-open', str(path)])
+
+    def append(self, line):
+        self.log.configure(state='normal')
+        self.log.insert('end', line if line.endswith('\n') else line + '\n')
+        if int(self.log.index('end-1c').split('.')[0]) > 2000:
+            self.log.delete('1.0', '500.0')
+        self.log.see('end')
+        self.log.configure(state='disabled')
+
+    def play(self):
+        if self.process:
+            messagebox.showinfo(self.t('title'), self.t('already'))
+            return
+        self.changed()
+        self.append(self.t('preparing'))
+        self.play_button.configure(state='disabled')
+        threading.Thread(target=self.run_game, daemon=True).start()
+
+    def run_game(self):
+        try:
+            tlg_run.prepare(self.settings, log=lambda line: self.lines.put(line))
+            self.process, log = tlg_run.launch(self.settings)
+        except Exception as error:  # shown to the user, the launcher keeps running
+            self.lines.put(('error', str(error)))
+            return
+        self.lines.put(f"{self.t('running')} {log}")
+        with open(log, 'w', encoding='utf-8') as out:
+            for line in self.process.stdout:
+                out.write(line)
+                out.flush()
+                self.lines.put(line.rstrip('\n'))
+        code = self.process.wait()
+        self.process = None
+        self.lines.put(('ended', code))
+
+    def pump(self):
+        try:
+            while True:
+                item = self.lines.get_nowait()
+                if isinstance(item, tuple):
+                    kind, value = item
+                    if kind == 'error':
+                        messagebox.showerror(self.t('error'), value)
+                    else:
+                        message = self.t('ended' if value in (0, -15) else 'crashed', code=value)
+                        self.append(message)
+                        if value not in (0, -15):
+                            messagebox.showwarning(self.t('title'), message)
+                    self.refresh_status()
+                else:
+                    self.append(item)
+        except queue.Empty:
+            pass
+        self.root.after(100, self.pump)
+
+    def quit(self):
+        if self.process:
+            self.process.terminate()
+        self.root.destroy()
+
+
+def main():
+    # Packaged executable roles: --script <file> runs a preparation script, --play starts the
+    # game with the saved settings and no launcher window (shortcuts, Steam).
+    args = sys.argv[1:]
+    if args[:1] == ['--script'] and len(args) > 1:
+        sys.exit(tlg_run.run_script(args[1:]))
+    if args[:1] == ['--play']:
+        sys.exit(tlg_run.main(args[1:]))
+    root = tk.Tk(className='tlou-pc')  # matches StartupWMClass in the desktop entry
+    try:
+        ttk.Style().theme_use('clam')
+    except tk.TclError:
+        pass
+    Launcher(root)
+    root.mainloop()
+
+
+if __name__ == '__main__':
+    main()

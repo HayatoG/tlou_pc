@@ -1,0 +1,187 @@
+# Builds the Linux and Windows packages on every push to main and publishes them as the
+# "nightly" pre-release, replacing the previous one (release and tag). A tag v* publishes a
+# versioned release that is kept. No game or console file is ever built in or uploaded.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  # Pull requests to main build both packages (artifacts only): the Release is left untouched.
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: port
+    env:
+      CC: gcc-14
+      CXX: g++-14
+      PKG_CONFIG_PATH: /opt/tlgdeps/lib/pkgconfig:/opt/tlgdeps/lib64/pkgconfig:/opt/tlgdeps/lib/x86_64-linux-gnu/pkgconfig
+      CMAKE_PREFIX_PATH: /opt/tlgdeps
+      LD_LIBRARY_PATH: /opt/tlgdeps/lib:/opt/tlgdeps/lib64:/opt/tlgdeps/lib/x86_64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: System packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends gcc-14 g++-14 cmake ninja-build pkg-config nasm \
+            curl git python3-venv python3-tk libvulkan-dev glslang-tools libboost-dev \
+            libxxhash-dev zlib1g-dev libx11-dev libxcb1-dev libxext-dev libxrandr-dev libxcursor-dev \
+            libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libdecor-0-dev libegl-dev libgl-dev libdrm-dev libgbm-dev libpulse-dev libasound2-dev \
+            libpipewire-0.3-dev libudev-dev libdbus-1-dev libusb-1.0-0-dev libfreetype-dev
+      - name: Cache built libraries
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: /opt/tlgdeps
+          key: tlgdeps-ubuntu2404-${{ hashFiles('port/packaging/linux/build_deps.sh') }}
+      - name: Build libraries (SDL3, Zydis, fmt, FFmpeg)
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          sudo mkdir -p /opt/tlgdeps && sudo chown "$USER" /opt/tlgdeps
+          bash packaging/linux/build_deps.sh
+      - name: Build
+        run: TLG_LTO=OFF TLG_PGO=off bash build.sh
+      - name: Package
+        run: bash packaging/linux/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tlou-linux-x86_64
+          path: port/dist/tlou-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+        working-directory: port
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.12'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            git patch
+            mingw-w64-clang-x86_64-toolchain mingw-w64-clang-x86_64-cmake mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-pkgconf mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-vulkan-headers mingw-w64-clang-x86_64-vulkan-loader
+            mingw-w64-clang-x86_64-vulkan-memory-allocator mingw-w64-clang-x86_64-glslang
+            mingw-w64-clang-x86_64-sdl3 mingw-w64-clang-x86_64-fmt mingw-w64-clang-x86_64-boost
+            mingw-w64-clang-x86_64-robin-map mingw-w64-clang-x86_64-xxhash mingw-w64-clang-x86_64-ffmpeg
+            mingw-w64-clang-x86_64-zydis mingw-w64-clang-x86_64-spirv-tools
+            mingw-w64-clang-x86_64-spirv-headers mingw-w64-clang-x86_64-spirv-cross
+            mingw-w64-clang-x86_64-freetype
+      - name: Build
+        env:
+          MSYS2_ROOT: ${{ runner.temp }}/msys64
+        run: |
+          export MSYS2_ROOT=$(cygpath -u "$MSYS2_ROOT")
+          TLG_LTO=OFF bash build.sh
+      - name: Package
+        env:
+          MSYS2_ROOT: ${{ runner.temp }}/msys64
+          WINPYTHON_WIN: ${{ steps.python.outputs.python-path }}
+        run: |
+          export MSYS2_ROOT=$(cygpath -u "$MSYS2_ROOT")
+          export WINPYTHON=$(cygpath -u "$WINPYTHON_WIN")
+          bash packaging/windows/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tlou-windows-x86_64
+          path: port/dist/tlou-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  release:
+    needs: [linux, windows]
+    # Only pushes publish (main -> nightly, v* tags -> versioned); pull requests stop at the artifacts.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: docs/ARQUIVOS_NECESSARIOS.md
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        run: |
+          set -euo pipefail
+          ls -la dist
+          test -f dist/tlou-linux-x86_64.tar.gz && test -f dist/tlou-windows-x86_64.zip
+          short=${GITHUB_SHA::7}
+          cat > notes.md <<NOTES
+          Build automático do commit ${short}. **Nenhum arquivo do jogo incluído**: veja o README-player.md dentro do pacote para o que copiar do seu PS4.
+          Automatic build of commit ${short}. **No game files included**: see README-player.md inside the package for what to copy from your PS4.
+
+          - Linux x86-64 (glibc 2.39+): \`tlou-linux-x86_64.tar.gz\`
+          - Windows 10/11 64-bit: \`tlou-windows-x86_64.zip\` (ainda não testado em jogo / not yet tested in game)
+
+          NOTES
+          # The list of game files the player needs (docs/ARQUIVOS_NECESSARIOS.md), before the download.
+          sed '1,/^\[Português\]/d' docs/ARQUIVOS_NECESSARIOS.md >> notes.md
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            # Versioned releases are kept forever; nothing below ever deletes a v* release.
+            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --prerelease
+            exit 0
+          fi
+          # Nightly: upload everything into a draft first, so the previous nightly stays
+          # available until the new build is fully uploaded. A failure here leaves it untouched.
+          staging="nightly-staging-${GITHUB_RUN_ID}"
+          gh release create "$staging" dist/* --draft --target "$GITHUB_SHA" --prerelease \
+            --title "Nightly ($(date -u +%Y-%m-%d) · ${short})" --notes-file notes.md
+          n=$(gh release view "$staging" --json assets --jq '.assets | length')
+          [[ $n -ge 2 ]] || { echo "staging release has $n assets"; exit 1; }
+          # Swap: drop the old nightly and its tag, then publish the draft as "nightly".
+          gh release delete nightly --cleanup-tag --yes || true
+          for try in 1 2 3; do
+            gh release edit "$staging" --tag nightly --target "$GITHUB_SHA" --draft=false --prerelease && break
+            sleep 10
+          done
+          gh release view nightly --json tagName,isDraft,assets \
+            --jq '"\(.tagName) draft=\(.isDraft) assets=\([.assets[].name] | join(","))"'
+          [[ $(gh release view nightly --json isDraft --jq .isDraft) == false ]]
+      - name: Delete older builds
+        # Only after the new nightly is live: the previous runs and their artifacts go, the
+        # current run (the one that produced this nightly) stays. Releases are not touched,
+        # apart from leftover nightly-staging drafts of failed runs.
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -uo pipefail
+          gh release list --limit 100 --json tagName,isDraft \
+            --jq '.[] | select(.isDraft and (.tagName | startswith("nightly-staging-"))) | .tagName' |
+            while read -r t; do gh release delete "$t" --yes || true; done
+          gh run list --workflow build.yml --status completed --limit 200 --json databaseId --jq '.[].databaseId' |
+            grep -vx "$GITHUB_RUN_ID" | xargs -r -n1 gh run delete || true
