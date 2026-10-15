@@ -12,15 +12,17 @@ Versão de desenvolvimento: **o jogo ainda não inicia.** / Development build: *
 
 ### Arquivos do jogo necessários
 
-Tudo vem do **seu** PS4 (GoldHEN + Itemzflow). Nada disso vai no download. Use **The Last of Us Remastered CUSA00552 (EUA), jogo base 1.00 com o update 1.11**, montado numa pasta só, com o jogo base e o update por cima. São ~33 GB.
+Tudo vem do **seu** PS4 (GoldHEN + Itemzflow). Nada disso vai no download. Use **The Last of Us Remastered CUSA00552 (EUA), jogo base 1.00 com o update 1.11**, montado numa pasta só, com o jogo base e o update por cima. São ~56 GB.
 
 | Arquivo | Vem de | Para quê |
 |---|---|---|
 | `eboot.bin` | update 1.11 | o código do jogo (tem que ser o do 1.11) |
 | `sce_module/libc.prx`, `sce_module/libSceFios2.prx` | update 1.11 | bibliotecas do próprio jogo |
-| `sce_sys/` (`param.sfo`, `playgo-chunk.dat`, `icon0.png`, `pic1.png`) | jogo base (+ `param.sfo` do update) | metadados, instalação e a arte do launcher |
-| `art/` (`cache/`, `movies/`, `ui/`) | base + update | conteúdo do jogo |
-| `playgo.pgm`, `sce_discmap.plt`, `sce_discmap_patch.plt` | base + update | mapa de arquivos e instalação |
+| `patch.psarc` | update 1.11 | o conteúdo do update |
+| `build/ps4/` | jogo base | o conteúdo do jogo (níveis, sons, vídeos) |
+| `data.psarc` | jogo base | dados iniciais |
+| `sce_sys/` (`param.sfo`, `icon0.png`, `pic1.png`) | jogo base (+ `param.sfo` do update) | metadados e a arte do launcher |
+| `sce_discmap.plt`, `sce_discmap_patch.plt` | base + update | mapa de arquivos |
 
 **Do firmware do console:** nada. A pasta `system_lib/` fica vazia.
 
@@ -28,6 +30,7 @@ Tudo vem do **seu** PS4 (GoldHEN + Itemzflow). Nada disso vai no download. Use *
 1. No Itemzflow, faça o dump do jogo (`CUSA00552`) e do update (`CUSA00552-patch`) para um pendrive exFAT.
 2. No PC, copie a pasta do jogo base e depois copie o conteúdo do update **por cima**, substituindo os arquivos.
 3. O `param.sfo` da versão 1.11 fica no PS4 em `/system_data/priv/appmeta/CUSA00552/param.sfo`: copie para o `sce_sys/` da pasta montada.
+4. **Não use o FTP do GoldHEN para o jogo base:** `build/ps4/main/mp-levels.psarc` passa de 4 GB e o FTP corta arquivos desse tamanho. Use o pendrive.
 
 **PC:** Windows 10 (1903+)/11 64 bits ou Linux x86-64 (glibc 2.39+), placa de vídeo com Vulkan 1.3 (6 GB de VRAM recomendados).
 
@@ -52,15 +55,17 @@ No Linux, `./install_desktop.sh` adiciona o jogo ao menu de aplicativos.
 
 ### Required game files
 
-Everything comes from **your own** PS4 (GoldHEN + Itemzflow). None of it is in the download. Use **The Last of Us Remastered CUSA00552 (US), base game 1.00 with update 1.11**, merged into one folder, with the base game and the update on top. About 33 GB.
+Everything comes from **your own** PS4 (GoldHEN + Itemzflow). None of it is in the download. Use **The Last of Us Remastered CUSA00552 (US), base game 1.00 with update 1.11**, merged into one folder, with the base game and the update on top. About 56 GB.
 
 | File | From | Purpose |
 |---|---|---|
 | `eboot.bin` | update 1.11 | the game code (must be the 1.11 one) |
 | `sce_module/libc.prx`, `sce_module/libSceFios2.prx` | update 1.11 | the game's own libraries |
-| `sce_sys/` (`param.sfo`, `playgo-chunk.dat`, `icon0.png`, `pic1.png`) | base game (+ the update's `param.sfo`) | metadata, install info and the launcher art |
-| `art/` (`cache/`, `movies/`, `ui/`) | base + update | game content |
-| `playgo.pgm`, `sce_discmap.plt`, `sce_discmap_patch.plt` | base + update | file map and install info |
+| `patch.psarc` | update 1.11 | the update's content |
+| `build/ps4/` | base game | the game content (levels, sound, movies) |
+| `data.psarc` | base game | startup data |
+| `sce_sys/` (`param.sfo`, `icon0.png`, `pic1.png`) | base game (+ the update's `param.sfo`) | metadata and the launcher art |
+| `sce_discmap.plt`, `sce_discmap_patch.plt` | base + update | file map |
 
 **From the console firmware:** nothing. The `system_lib/` folder stays empty.
 
@@ -68,6 +73,7 @@ Everything comes from **your own** PS4 (GoldHEN + Itemzflow). None of it is in t
 1. In Itemzflow, dump the game (`CUSA00552`) and the update (`CUSA00552-patch`) to an exFAT USB drive.
 2. On the PC, copy the base game folder, then copy the update's contents **over it**, replacing files.
 3. The 1.11 `param.sfo` is at `/system_data/priv/appmeta/CUSA00552/param.sfo` on the PS4: copy it into the merged folder's `sce_sys/`.
+4. **Don't use GoldHEN's FTP for the base game:** `build/ps4/main/mp-levels.psarc` is over 4 GB and the FTP truncates files that size. Use the USB drive.
 
 **PC:** 64-bit Windows 10 (1903+)/11 or x86-64 Linux (glibc 2.39+), a graphics card with Vulkan 1.3 (6 GB of VRAM recommended).
 
