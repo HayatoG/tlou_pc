@@ -1,11 +1,11 @@
-"""Builds the port's icon files from packaging/icon/infamous-icon-1024.png (original art made for
+"""Builds the port's icon files from packaging/icon/tlou-icon-1024.png (original art made for
 this project; the official game art is read from the player's dump at run time). Needs Pillow.
-usage: make_icon.py launcher/infamous.ico launcher/infamous.png"""
+usage: make_icon.py launcher/tlou.ico launcher/tlou.png"""
 from pathlib import Path
 import sys
 from PIL import Image
 
-SOURCE = Path(__file__).resolve().parent.parent / 'icon' / 'infamous-icon-1024.png'
+SOURCE = Path(__file__).resolve().parent.parent / 'icon' / 'tlou-icon-1024.png'
 
 
 def main():
