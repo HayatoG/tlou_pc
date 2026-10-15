@@ -48,6 +48,8 @@ No Linux, `./install_desktop.sh` adiciona o jogo ao menu de aplicativos.
 
 ### Problemas
 - **Não abre ou fecha sozinho**: é o esperado nesta fase. Mande o `out/last_run.log` no [Discord](https://discord.gg/UMkdMYZh9g) ou numa [issue](https://github.com/HayatoG/tlou_pc/issues) se quiser ajudar.
+- **Windows: proteção da red zone** (do inFAMOUS, iss_pc #29/#41, onde derrubava o jogo): o Windows escreve abaixo do `rsp` do jogo a cada exceção, e o port reescreve na partida as instruções que guardam dados ali. Vem ligada no Windows; `TLOU_RED_ZONE_REWRITE=0` desliga. Detalhes: `port/docs/red_zone.md`.
+- **Windows: "disco corrompido" ou erro de arquivo**: toda leitura, gravação, abertura ou renomeação que falha vai para o `out/last_run.log` (`Runtime: ... Win32 error N`). Mande esse log.
 
 ---
 
@@ -91,6 +93,8 @@ On Linux, `./install_desktop.sh` adds the game to the applications menu.
 
 ### Problems
 - **Does not start or closes by itself**: expected at this stage. Send `out/last_run.log` on [Discord](https://discord.gg/UMkdMYZh9g) or in an [issue](https://github.com/HayatoG/tlou_pc/issues) if you want to help.
+- **Windows red-zone protection** (from inFAMOUS, iss_pc #29/#41, where it crashed the game): Windows writes below the game's `rsp` on every exception, so at start the port rewrites the instructions that keep data there. On by default on Windows; `TLOU_RED_ZONE_REWRITE=0` turns it off. Details: `port/docs/red_zone.md`.
+- **Windows: "disc is corrupt" or a file error**: every failed read, write, open or rename goes to `out/last_run.log` (`Runtime: ... Win32 error N`). Send that log.
 
 ---
 

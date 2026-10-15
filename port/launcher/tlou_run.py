@@ -220,20 +220,35 @@ def cpu_missing_sets():
     return []
 
 
+def red_zone_wanted(env=None):
+    """Windows red-zone protection (scripts/red_zone.py, from iss_pc #29/#41): on by default on
+    Windows, TLOU_RED_ZONE_REWRITE=0 turns it off; on Linux only TLOU_RED_ZONE_REWRITE=1 (tests)
+    turns it on. TLG_RED_ZONE_REWRITE is still accepted."""
+    env = os.environ if env is None else env
+    policy = env.get('TLOU_RED_ZONE_REWRITE') or env.get('TLG_RED_ZONE_REWRITE') or ''
+    return policy != '0' if os.name == 'nt' else policy == '1'
+
+
 def isa_table(log=print):
     """ps4_core ISA rewrite (upstream gow3_pc #129): on a CPU without MOVBE, BMI1 or LZCNT the
     probe replaces those instructions in the image, from the table scripts/isa_rewrite.py writes
-    (iced-x86). TLOU_ISA_REWRITE=1 builds it on any CPU (testing), =0 never. A failed table is
-    reported and the probe then explains what is missing."""
-    ISA_TABLE.unlink(missing_ok=True)  # always matches the boot-linked.bin just written
+    (iced-x86). TLOU_ISA_REWRITE=1 builds it on any CPU (testing), =0 never. The same table carries
+    the red-zone protection (red_zone_wanted), so on Windows it is always built; the script keeps a
+    table that already matches the image. A failed table is reported and the probe then explains
+    what is missing."""
     policy = os.environ.get('TLOU_ISA_REWRITE')
+    red_zone = red_zone_wanted()
+    if not red_zone:
+        ISA_TABLE.unlink(missing_ok=True)  # always matches the boot-linked.bin just written
     missing = cpu_missing_sets()
-    if not (policy == '1' or (policy != '0' and missing)):
+    if not (policy == '1' or (policy != '0' and missing) or red_zone):
         return
     scripts = PORT_DIR / 'scripts'
     result = subprocess.run([*python_command(scripts / 'isa_rewrite.py'), str(OUT_DIR / 'boot-linked.bin'),
-                             '--out', str(OUT_DIR)], cwd=str(scripts), capture_output=True, text=True,
-                            creationflags=NO_WINDOW)
+                             '--out', str(OUT_DIR), *(['--red-zone'] if red_zone else [])], cwd=str(scripts),
+                            capture_output=True, text=True, creationflags=NO_WINDOW)
+    if result.returncode:
+        ISA_TABLE.unlink(missing_ok=True)
     for line in (result.stdout + result.stderr).splitlines():
         log(line)
 

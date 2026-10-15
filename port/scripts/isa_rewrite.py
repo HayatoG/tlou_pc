@@ -6,9 +6,11 @@ the jump also covers the plain next instruction, copied into the stub), INT3
 (4 bytes, trapped at run time) or UNSUPPORTED (an encoding the stubs do not
 emulate: segment override, LOCK, 32-bit addressing or F16C).
 
-Usage: isa_rewrite.py out/boot-linked.bin --out out
+Usage: isa_rewrite.py out/boot-linked.bin --out out [--red-zone]
 Reads the G3PROBE5 image, scans its executable segments and writes
-<out>/isa-rewrite.bin (format G3ISA1: HEADER, then one RECORD per site).
+<out>/isa-rewrite.bin (format G3ISA1: HEADER, then one RECORD per site). --red-zone appends the
+Windows red-zone protection section (scripts/red_zone.py, G3RZONE1; its size is the last header
+field). A table that already matches the image and the options is kept (the analysis takes seconds).
 """
 import argparse
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ from pathlib import Path
 import struct
 import sys
 from prepare import span, unpack
+import red_zone
 
 try:
     import iced_x86
@@ -27,8 +30,9 @@ except ImportError:
 (KIND_MOVBE_LOAD, KIND_MOVBE_STORE, KIND_LZCNT, KIND_TZCNT, KIND_ANDN, KIND_BEXTR,
  KIND_BLSI, KIND_BLSMSK, KIND_BLSR, KIND_VCVTPH2PS, KIND_VCVTPS2PH) = range(1, 12)
 MODE_JMP, MODE_JMP_RELOCATE, MODE_INT3, MODE_UNSUPPORTED = range(4)
+MEM_RELOCATED_FAULTABLE = 2
 NO_REG = 0xFF
-HEADER = struct.Struct('<8sQ32sII8x')                # magic, image size, sha256, sites, unsupported
+HEADER = struct.Struct('<8sQ32sIIQ')                # magic, image size, sha256, sites, unsupported, red-zone bytes
 RECORD = struct.Struct('<QBBBBBBBBBBBB4xq15sB15sx')  # mirrors IsaSite in the C loader
 SET_OF_KIND = {KIND_MOVBE_LOAD: 'MOVBE', KIND_MOVBE_STORE: 'MOVBE', KIND_LZCNT: 'LZCNT',
                KIND_TZCNT: 'BMI1', KIND_ANDN: 'BMI1', KIND_BEXTR: 'BMI1', KIND_BLSI: 'BMI1',
@@ -49,7 +53,8 @@ class Site:
     base: int
     index: int
     scale: int
-    mem_flags: int  # bit 0: RIP-relative, disp is the absolute target
+    mem_flags: int  # bit 0: RIP-relative, disp is the absolute target; bit 1: the relocated
+                    # instruction can fault on a tracked page (red-zone protection steps rsp over it)
     disp: int
     original: bytes
     relocated: bytes
@@ -123,9 +128,13 @@ def scan_segment(code, address):
         sites.append(site)
         if site.mode == MODE_INT3 and ins.len == 4:
             pending = site
+    factory = iced_x86.InstructionInfoFactory()
     for site, ip, relocated in candidates:
         if ip not in targets:
             site.mode, site.relocated = MODE_JMP_RELOCATE, relocated
+            follower = red_zone.describe(Decoder(64, relocated, ip=ip).decode(), factory)
+            if follower.faultable and not follower.uses_sp:
+                site.mem_flags |= MEM_RELOCATED_FAULTABLE
     return sites
 
 
@@ -144,13 +153,15 @@ def read_boot_linked(data):
     return segments, span(data, pos, size)
 
 
-def encode_table(image, sites):
+def encode_table(image, sites, red_zone_section=b'', digest=None):
     unsupported = sum(s.mode == MODE_UNSUPPORTED for s in sites)
-    table = [HEADER.pack(b'G3ISA1\0\0', len(image), hashlib.sha256(image).digest(), len(sites), unsupported)]
+    digest = digest or hashlib.sha256(image).digest()
+    table = [HEADER.pack(b'G3ISA1\0\0', len(image), digest, len(sites), unsupported, len(red_zone_section))]
     for s in sorted(sites, key=lambda s: s.offset):   # the C loader rejects records out of order
         table.append(RECORD.pack(s.offset, s.length, s.kind, s.width, s.mode, s.dst, s.src1, s.src2, s.mem_slot,
                                  s.base, s.index, s.scale, s.mem_flags, s.disp, s.original, len(s.relocated),
                                  s.relocated))
+    table.append(red_zone_section)
     return b''.join(table)
 
 
@@ -174,22 +185,70 @@ def fixture_code():
         'c3'))                     # ret
 
 
+def isa_bytes(sites):
+    """Image bytes the emulation rewrite may patch (sites and the instructions they relocate)."""
+    covered = set()
+    for s in sites:
+        if s.mode == MODE_UNSUPPORTED:
+            continue
+        covered.update(range(s.offset, s.offset + max(s.length, 4 + len(s.relocated))))
+    return frozenset(covered)
+
+
+def cached(path, digest, image_size, red_zone_wanted):
+    """The summary of an existing table for this image and options, or None."""
+    try:
+        data = path.read_bytes()
+        magic, size, sha, count, _, rz_bytes = HEADER.unpack_from(data, 0)
+        if magic != b'G3ISA1\0\0' or size != image_size or sha != digest or bool(rz_bytes) != red_zone_wanted:
+            return None
+        if len(data) != HEADER.size + RECORD.size * count + rz_bytes:
+            return None
+        if not rz_bytes:
+            return None                  # unversioned: always rebuilt (3 s)
+        section = data[HEADER.size + RECORD.size * count:]
+        magic, _, _, _, _, version, crc = red_zone.SECTION.unpack_from(section, 0)
+        if magic != red_zone.MAGIC or version != red_zone.VERSION or crc != red_zone.source_crc():
+            return None
+        stats = dict(zip(red_zone.STATS_FIELDS, red_zone.STATS.unpack_from(section, red_zone.SECTION.size)))
+        return f'ISA: {count} sites (table kept, it matches the image)\n{red_zone.summary(stats)}'
+    except (OSError, struct.error, ValueError):
+        return None
+
+
 def main(argv):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('boot', type=Path)
     p.add_argument('--out', type=Path, default=Path(__file__).resolve().parent.parent / 'out')
+    p.add_argument('--red-zone', action='store_true', help='append the Windows red-zone protection section')
     a = p.parse_args(argv)
     try:
         if iced_x86 is None:
             raise RuntimeError('iced_x86 is not installed')
         segments, image = read_boot_linked(a.boot.read_bytes())
+        digest = hashlib.sha256(image).digest()
+        table = a.out / 'isa-rewrite.bin'
+        kept = cached(table, digest, len(image), a.red_zone)
+        if kept:
+            print(kept)
+            return 0
         sites = [site for address, size, flags in segments if flags & 1
                  for site in scan_segment(span(image, address, size), address)]
-        (a.out / 'isa-rewrite.bin').write_bytes(encode_table(image, sites))
+        section, rz = b'', None
+        if a.red_zone:
+            try:
+                builder, rz = red_zone.analyze(image, segments, red_zone.code_offset_for(len(image), len(sites)),
+                                               isa_bytes(sites))
+                section = red_zone.encode_section(builder, rz)
+            except (ValueError, RuntimeError) as e:
+                print(f'Red zone: protection unavailable ({e})')
+        table.write_bytes(encode_table(image, sites, section, digest))
     except (OSError, ValueError, RuntimeError) as e:
         print(f'ISA: rewrite table unavailable ({e})')
         return 1
     print(summary(sites))
+    if rz:
+        print(red_zone.summary(rz))
     return 0
 
 
