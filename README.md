@@ -1,5 +1,7 @@
 <h1 align="center">ps4_core — núcleo compartilhado dos ports nativos de PS4</h1>
 
+<p align="center"><a href="https://buymeacoffee.com/hayatog"><img src="https://img.shields.io/badge/Buy_me_a_coffee-Apoie_o_projeto-FFDD00?logo=buymeacoffee&amp;logoColor=000000" alt="Apoie com um café / Buy me a coffee"></a></p>
+
 <p align="center">
   <a href="#english"><b>English below</b></a> ·
   <a href="docs/LIBRARIES.md">Bibliotecas</a> ·
@@ -200,3 +202,9 @@ Core-only build: `cd port && flock -x <lock> env TLG_LTO=OFF bash build.sh --tes
 ## Tools
 
 `tools/list_exports.py -o docs/LIBRARIES.md` regenerates the library catalogue; `scripts/sce_imports.py` lists a new game's imports per library.
+
+## Apoie o desenvolvimento / Support development
+
+Se quiser apoiar os ports, [pague um café pelo Buy Me a Coffee](https://buymeacoffee.com/hayatog). O apoio é opcional; os ports continuam gratuitos.
+
+If you would like to support the ports, [buy me a coffee](https://buymeacoffee.com/hayatog). Support is optional; the ports remain free.
