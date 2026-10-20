@@ -10,6 +10,8 @@
   <a href="https://discord.gg/UMkdMYZh9g">Discord</a>
 </p>
 
+<p align="center"><a href="https://github.com/sponsors/HayatoG"><img src="https://img.shields.io/badge/Sponsor-HayatoG-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor HayatoG on GitHub"></a></p>
+
 > **Repositório só local.** Sem GitHub, sem remoto, sem push (por enquanto). É aqui que se acumula tudo o que um jogo de PS4 precisa para rodar nativo no PC, e que hoje vai copiado em cada port: [tlg_pc](https://github.com/HayatoG/tlg_pc) (The Last Guardian), [gr2_pc](https://github.com/HayatoG/gr2_pc) (Gravity Rush 2) e `infamous_pc` (inFAMOUS Second Son, GitHub `iss_pc`).
 
 Por **HayatoG** · Licença GPL-2.0-or-later (`port/LICENSE`, `port/UPSTREAM.md`) · **Nenhum arquivo da Sony entra aqui** (eboot, prx, sprx, psarc, sfo, arte oficial): o `.gitignore` barra os formatos.
